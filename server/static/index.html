@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TeleOp XR</title>
+    <script>
+        // Global error handler to catch script loading errors
+        window.onerror = function(message, source, lineno, colno, error) {
+            const errorElement = document.getElementById('debug');
+            if (errorElement) {
+                const timestamp = new Date().toLocaleTimeString();
+                errorElement.innerHTML += `[${timestamp}] ERROR: ${message} (${source}:${lineno}:${colno})\n`;
+                console.error(message, error);
+            }
+            return false;
+        };
+    </script>
+    <!-- Import Three.js - using a version compatible with three-urdf -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/build/three.min.js"></script>
+    <!-- STL Loader for mesh files -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.133.0/examples/js/loaders/STLLoader.js"></script>    
+
+    <!-- ProtobufJS for binary serialization - load before app.js -->
+    <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.min.js" defer></script>
+    
+    <!-- Simple custom URDF loading tools -->
+    <script>
+        // Define a simple custom URDF loader that uses built-in Three.js functionality
+        window.CustomURDFLoader = class {
+            constructor() {
+                this.meshes = {};
+                this.joints = {};
+                this.links = {};
+                this.robotObject = new THREE.Group();
+            }
+            
+            async load(urdfPath) {
+                try {
+                    // Fetch the URDF file
+                    const response = await fetch(urdfPath);
+                    if (!response.ok) {
+                        throw new Error(`Failed to fetch URDF: ${response.statusText}`);
+                    }
+                    
+                    const text = await response.text();
+                    const parser = new DOMParser();
+                    const urdfXml = parser.parseFromString(text, "text/xml");
+                    
+                    // Parse the URDF XML
+                    const robotElement = urdfXml.querySelector('robot');
+                    if (!robotElement) {
+                        throw new Error('No robot element found in URDF');
+                    }
+                    
+                    const robotName = robotElement.getAttribute('name') || 'robot';
+                    this.robotObject.name = robotName;
+                    
+                    // Process links (mesh elements)
+                    const links = urdfXml.querySelectorAll('link');
+                    for (const link of links) {
+                        const linkName = link.getAttribute('name');
+                        const visualElements = link.querySelectorAll('visual');
+                        
+                        if (visualElements.length > 0) {
+                            const linkGroup = new THREE.Group();
+                            linkGroup.name = linkName;
+                            
+                            for (const visual of visualElements) {
+                                // Get visual origin transformation
+                                let visualPosition = new THREE.Vector3(0, 0, 0);
+                                let visualRotation = new THREE.Euler(0, 0, 0);
+                                
+                                const visualOriginElement = visual.querySelector('origin');
+                                if (visualOriginElement) {
+                                    const xyz = visualOriginElement.getAttribute('xyz');
+                                    const rpy = visualOriginElement.getAttribute('rpy');
+                                    
+                                    if (xyz) {
+                                        const [x, y, z] = xyz.split(' ').map(parseFloat);
+                                        visualPosition.set(x || 0, y || 0, z || 0);
+                                    }
+                                    
+                                    if (rpy) {
+                                        const [r, p, y] = rpy.split(' ').map(parseFloat);
+                                        visualRotation.set(r || 0, p || 0, y || 0);
+                                        
+                                        // Debug
+                                        if (linkName === 'Base') {
+                                            console.log(`Base visual origin RPY: ${r || 0}, ${p || 0}, ${y || 0}`);
+                                        }
+                                    }
+                                }
+                                
+                                // Create a group for this visual element with its own transformation
+                                const visualGroup = new THREE.Group();
+                                visualGroup.position.copy(visualPosition);
+                                visualGroup.rotation.copy(visualRotation);
+                                
+                                const meshElement = visual.querySelector('mesh');
+                                if (meshElement) {
+                                    // Check for mesh origin transformation (some URDFs have this)
+                                    let meshPosition = new THREE.Vector3(0, 0, 0);
+                                    let meshRotation = new THREE.Euler(0, 0, 0);
+                                    let meshScale = new THREE.Vector3(1, 1, 1);
+                                    
+                                    // Get mesh scale if available
+                                    const scale = meshElement.getAttribute('scale');
+                                    if (scale) {
+                                        const [sx, sy, sz] = scale.split(' ').map(parseFloat);
+                                        meshScale.set(sx || 1, sy || 1, sz || 1);
+                                    }
+                                    
+                                    // Apply mesh scale to the visual group
+                                    visualGroup.scale.copy(meshScale);
+                                    
+                                    const meshPath = meshElement.getAttribute('filename');
+                                    if (meshPath) {
+                                        // Load mesh into the visual group
+                                        await this.loadMesh(meshPath, visualGroup);
+                                    }
+                                }
+                                
+                                // Add the transformed visual group to the link
+                                linkGroup.add(visualGroup);
+                            }
+                            
+                            this.meshes[linkName] = linkGroup;
+                            this.links[linkName] = linkGroup;
+                            this.robotObject.add(linkGroup);
+                        }
+                    }
+                    
+                    // Process joints
+                    const joints = urdfXml.querySelectorAll('joint');
+                    for (const joint of joints) {
+                        const jointName = joint.getAttribute('name');
+                        const jointType = joint.getAttribute('type');
+                        const parentElement = joint.querySelector('parent');
+                        const childElement = joint.querySelector('child');
+                        const originElement = joint.querySelector('origin');
+                        const axisElement = joint.querySelector('axis');
+                        
+                        if (parentElement && childElement) {
+                            const parentLink = parentElement.getAttribute('link');
+                            const childLink = childElement.getAttribute('link');
+                            
+                            // Get origin (position and orientation)
+                            let position = new THREE.Vector3(0, 0, 0);
+                            let rotation = new THREE.Euler(0, 0, 0);
+                            
+                            if (originElement) {
+                                const xyz = originElement.getAttribute('xyz');
+                                const rpy = originElement.getAttribute('rpy');
+                                
+                                if (xyz) {
+                                    const [x, y, z] = xyz.split(' ').map(parseFloat);
+                                    position = new THREE.Vector3(x || 0, y || 0, z || 0);
+                                }
+                                
+                                if (rpy) {
+                                    const [r, p, y] = rpy.split(' ').map(parseFloat);
+                                    rotation = new THREE.Euler(r || 0, p || 0, y || 0);
+                                }
+                            }
+                            
+                            // Get axis of rotation for revolute joints
+                            let axis = new THREE.Vector3(1, 0, 0); // Default x-axis
+                            if (axisElement && jointType === 'continuous' || jointType === 'revolute') {
+                                const axisStr = axisElement.getAttribute('xyz');
+                                if (axisStr) {
+                                    const [x, y, z] = axisStr.split(' ').map(parseFloat);
+                                    axis = new THREE.Vector3(x || 0, y || 0, z || 0);
+                                    axis.normalize();
+                                    
+                                    // Transform the axis according to the joint orientation
+                                    if (originElement) {
+                                        const rpy = originElement.getAttribute('rpy');
+                                        if (rpy) {
+                                            const [r, p, y] = rpy.split(' ').map(parseFloat);
+                                            
+                                            // Apply rotation to the axis if joint has non-zero orientation
+                                            if (r !== 0 || p !== 0 || y !== 0) {
+                                                // Create a matrix from the rotation
+                                                const rotMatrix = new THREE.Matrix4().makeRotationFromEuler(
+                                                    new THREE.Euler(r || 0, p || 0, y || 0)
+                                                );
+                                                
+                                                // Transform the axis according to the joint orientation
+                                                axis.applyMatrix4(rotMatrix);
+                                                axis.normalize();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Store joint info
+                            this.joints[jointName] = {
+                                type: jointType,
+                                parent: parentLink,
+                                child: childLink,
+                                position: position,
+                                rotation: rotation,
+                                axis: axis,
+                                currentAngle: 0, // Default angle
+                                // Remove the needsCorrection flag entirely
+                                needsCorrection: false
+                            };
+                            
+                            // Position child link relative to parent based on joint origin
+                            if (this.links[childLink]) {
+                                // Apply joint origin transformation to child link
+                                this.links[childLink].position.copy(position);
+                                this.links[childLink].rotation.copy(rotation);
+                            }
+                        }
+                    }
+                    
+                    // Create hierarchical structure
+                    this.buildHierarchy();
+                    
+                    return this.robotObject;
+                } catch (error) {
+                    console.error('Error loading URDF:', error);
+                    throw error;
+                }
+            }
+            
+            buildHierarchy() {
+                // Start by removing all links from robot object
+                for (const linkName in this.links) {
+                    this.robotObject.remove(this.links[linkName]);
+                }
+                
+                // Find the root link (not a child in any joint)
+                const allLinks = new Set(Object.keys(this.links));
+                const childLinks = new Set();
+                
+                for (const jointName in this.joints) {
+                    const joint = this.joints[jointName];
+                    childLinks.add(joint.child);
+                }
+                
+                const rootLinks = [...allLinks].filter(link => !childLinks.has(link));
+                
+                if (rootLinks.length === 0) {
+                    console.warn('No root link found in URDF');
+                    return;
+                }
+                
+                // Add root links directly to robot object
+                for (const rootLink of rootLinks) {
+                    this.robotObject.add(this.links[rootLink]);
+                }
+                
+                // Build tree structure - Bug fix: process in topological order to ensure parent transforms are set first
+                // First, create a map of children for each link
+                const childMap = {};
+                for (const jointName in this.joints) {
+                    const joint = this.joints[jointName];
+                    if (!childMap[joint.parent]) {
+                        childMap[joint.parent] = [];
+                    }
+                    childMap[joint.parent].push({
+                        joint: jointName,
+                        child: joint.child
+                    });
+                }
+                
+                // Helper function to process a link and all its children recursively
+                const processLink = (linkName) => {
+                    const children = childMap[linkName] || [];
+                    for (const { joint, child } of children) {
+                        const parentLink = this.links[linkName];
+                        const childLink = this.links[child];
+                        
+                        if (parentLink && childLink) {
+                            // Add child to parent
+                            parentLink.add(childLink);
+                            
+                            // Apply joint transformation
+                            const jointInfo = this.joints[joint];
+                            
+                            // Set position and rotation according to joint origin
+                            childLink.position.copy(jointInfo.position);
+                            childLink.rotation.copy(jointInfo.rotation);
+                            
+                            // If there's a non-zero joint angle, apply it
+                            if (jointInfo.currentAngle !== 0 && 
+                                (jointInfo.type === 'revolute' || jointInfo.type === 'continuous')) {
+                                // Create rotation quaternion based on axis and angle
+                                const quaternion = new THREE.Quaternion();
+                                quaternion.setFromAxisAngle(jointInfo.axis, jointInfo.currentAngle);
+                                
+                                // Apply to the child link
+                                const originalRotationQuaternion = new THREE.Quaternion()
+                                    .setFromEuler(childLink.rotation);
+                                childLink.quaternion.copy(originalRotationQuaternion);
+                                childLink.quaternion.premultiply(quaternion);
+                            }
+                            
+                            // Process children of this link
+                            processLink(child);
+                        }
+                    }
+                };
+                
+                // Start processing from root links
+                for (const rootLink of rootLinks) {
+                    processLink(rootLink);
+                }
+                
+                // Update the entire robot's world matrix
+                this.robotObject.updateMatrixWorld(true);
+            }
+            
+            // Set angle for a joint
+            setJointAngle(jointName, angleRadians) {
+                const joint = this.joints[jointName];
+                if (!joint) {
+                    console.warn(`Joint ${jointName} not found`);
+                    return false;
+                }
+                
+                // Only revolute and continuous joints can rotate
+                if (joint.type !== 'revolute' && joint.type !== 'continuous') {
+                    console.warn(`Joint ${jointName} is not a revolute or continuous joint`);
+                    return false;
+                }
+                
+                const childLink = this.links[joint.child];
+                if (!childLink) {
+                    console.warn(`Child link ${joint.child} for joint ${jointName} not found`);
+                    return false;
+                }
+                
+                // Store current angle
+                joint.currentAngle = angleRadians;
+                
+                // Reset rotation to joint's original rotation
+                childLink.rotation.copy(joint.rotation);
+                
+                // Create rotation quaternion based on axis and angle
+                const quaternion = new THREE.Quaternion();
+                quaternion.setFromAxisAngle(joint.axis, angleRadians);
+                
+                // Bug fix: Need to create a quaternion from the original rotation first
+                const originalRotationQuaternion = new THREE.Quaternion().setFromEuler(childLink.rotation);
+                
+                // Apply original rotation first, then the joint rotation
+                childLink.quaternion.copy(originalRotationQuaternion);
+                childLink.quaternion.premultiply(quaternion);
+                
+                // Ensure child transforms are updated
+                childLink.updateMatrixWorld(true);
+                
+                return true;
+            }
+            
+            // Set angles for multiple joints
+            setJointAngles(angleMap) {
+                for (const [jointName, angle] of Object.entries(angleMap)) {
+                    this.setJointAngle(jointName, angle);
+                }
+            }
+            
+            // Get current joint angles
+            getJointAngles() {
+                const angles = {};
+                for (const jointName in this.joints) {
+                    angles[jointName] = this.joints[jointName].currentAngle;
+                }
+                return angles;
+            }
+            
+            async loadMesh(path, parent) {
+                // Improved path handling for mesh files
+                let meshPath = path;
+                
+                // First check if it's an absolute URL or an absolute path
+                if (meshPath.startsWith('http') || meshPath.startsWith('//')) {
+                    // Leave external URLs unchanged
+                    console.log(`Using external mesh URL: ${meshPath}`);
+                } else {
+                    // Handle file paths
+                    // Check if it contains "urdf/meshes" or just "meshes" to avoid creating redundant paths
+                    if (meshPath.includes('urdf/meshes/') || meshPath.includes('/urdf/meshes/')) {
+                        // Already has a proper path structure, just ensure it starts with /
+                        if (!meshPath.startsWith('/')) {
+                            meshPath = `/${meshPath}`;
+                        }
+                        console.log(`Using mesh path with existing structure: ${meshPath}`);
+                    } else if (meshPath.includes('meshes/')) {
+                        // Contains just a meshes folder reference, add / if needed
+                        if (!meshPath.startsWith('/')) {
+                            meshPath = `/${meshPath}`;
+                        }
+                        console.log(`Using mesh path with meshes folder: ${meshPath}`);
+                    } else {
+                        // Standard path without any structure, prepend /meshes/
+                        if (meshPath.startsWith('/')) {
+                            meshPath = `/meshes${meshPath}`;
+                        } else {
+                            meshPath = `/meshes/${meshPath}`;
+                        }
+                        console.log(`Using standard mesh path: ${meshPath}`);
+                    }
+                }
+                
+                console.log(`Final mesh path: ${meshPath}`);
+                
+                if (meshPath.toLowerCase().endsWith('.stl')) {
+                    return new Promise((resolve, reject) => {
+                        const stlLoader = new THREE.STLLoader();
+                        stlLoader.load(
+                            meshPath,
+                            (geometry) => {
+                                // Center the geometry if it's not already centered
+                                geometry.computeBoundingBox();
+                                
+                                // Get the bounding box center
+                                const center = new THREE.Vector3();
+                                geometry.boundingBox.getCenter(center);
+                                
+                                // We don't auto-center meshes as they should be positioned according to URDF
+                                // Just create materials with appropriate settings
+                                const material = new THREE.MeshPhongMaterial({
+                                    color: 0x888888,
+                                    shininess: 30,
+                                    specular: 0x111111
+                                });
+                                
+                                // Create the mesh without modifying the geometry position
+                                const mesh = new THREE.Mesh(geometry, material);
+                                
+                                // Add the mesh to the parent group
+                                parent.add(mesh);
+                                resolve(mesh);
+                            },
+                            null,
+                            (error) => {
+                                console.error('Error loading STL:', error);
+                                console.error('Failed path:', meshPath);
+                                // Try an alternative path as fallback
+                                if (meshPath.includes('/urdf/meshes/')) {
+                                    const altPath = meshPath.replace('/urdf/meshes/', '/meshes/');
+                                    console.log(`Trying alternative path: ${altPath}`);
+                                    stlLoader.load(
+                                        altPath,
+                                        (geometry) => {
+                                            geometry.computeBoundingBox();
+                                            const center = new THREE.Vector3();
+                                            geometry.boundingBox.getCenter(center);
+                                            const material = new THREE.MeshPhongMaterial({
+                                                color: 0x888888,
+                                                shininess: 30,
+                                                specular: 0x111111
+                                            });
+                                            const mesh = new THREE.Mesh(geometry, material);
+                                            parent.add(mesh);
+                                            resolve(mesh);
+                                        },
+                                        null,
+                                        (altError) => {
+                                            console.error('Alternative path also failed:', altError);
+                                            reject(error); // Reject with original error
+                                        }
+                                    );
+                                } else {
+                                    reject(error);
+                                }
+                            }
+                        );
+                    });
+                } else {
+                    console.warn(`Unsupported mesh format: ${meshPath}`);
+                    return null;
+                }
+            }
+        };
+        
+        // Helper function to detect Oculus browsers
+        window.isOculusBrowser = function() {
+            return /oculus|quest|meta/i.test(navigator.userAgent);
+        };
+    </script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            /* Ensure transparent background for AR passthrough */
+            background-color: transparent !important;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            z-index: 100;
+            display: block;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+        }
+        #startButton {
+            position: absolute;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 100;
+        }
+        #startButton:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #debugButton {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            padding: 10px 20px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 100;
+        }
+        #debug {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            width: calc(100% - 20px);
+            height: 200px;
+            background-color: rgba(0, 0, 0, 0.85);
+            color: #00ff00;
+            font-family: monospace;
+            padding: 10px;
+            overflow-y: auto;
+            z-index: 100;
+            font-size: 12px;
+            white-space: pre;
+            border: 1px solid rgba(0, 255, 0, 0.2);
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+            line-height: 1.3;
+        }
+        #robotSelectorContainer {
+            position: absolute;
+            top: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 100;
+            color: white;
+            min-width: 300px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+        #robotSelector {
+            width: 100%;
+            padding: 8px;
+            margin: 10px 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            color: white;
+            font-size: 14px;
+        }
+        #robotSelector option {
+            background-color: #333;
+            color: white;
+        }
+        .robot-info {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+        }
+        .robot-info p {
+            margin: 5px 0;
+            line-height: 1.4;
+            font-size: 13px;
+        }
+        #controllerBindingsInfo {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .controller-binding {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            padding: 5px;
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+        }
+        .controller-binding .key {
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-right: 8px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .controller-binding .action {
+            color: #4CAF50;
+        }
+        #jointControlsContainer {
+            position: absolute;
+            top: 150px;
+            right: 10px;
+            width: 300px;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 100;
+            color: white;
+            display: none;
+            max-height: 60%;
+            overflow-y: auto;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+        .joint-control {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+        }
+        .joint-control label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 13px;
+        }
+        .joint-control input[type="range"] {
+            width: 100%;
+            margin-top: 5px;
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.1);
+            height: 4px;
+            border-radius: 2px;
+        }
+        .joint-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .joint-control input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+        .joint-control input[type="range"]::-moz-range-track {
+            background: rgba(255, 255, 255, 0.1);
+            height: 4px;
+            border-radius: 2px;
+        }
+        h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 8px;
+            font-size: 16px;
+            color: #4CAF50;
+        }
+        /* WebXR Overlay styles */
+        #overlay {
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 10;
+            pointer-events: none; /* Allow clicking through the overlay */
+        }
+        /* Make UI elements in the overlay clickable */
+        #overlay button, 
+        #overlay .clickable {
+            pointer-events: auto;
+        }
+        /* AR mode indicator */
+        #arModeIndicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.6);
+            color: #4CAF50;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 1000;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Loading...</div>
+    <button id="startButton" disabled>Enter XR</button>
+    <button id="debugButton">Toggle Debug</button>
+
+    <!-- Robot selector -->
+    <div id="robotSelectorContainer" style="display: none; margin-top: 10px;">
+      <h3>Teleoperation Control</h3>
+      <label for="robotSelector">Select Robot:</label>
+      <select id="robotSelector"></select>
+      <div class="robot-info">
+        <p id="robotDescription"></p>
+        <p id="controllerBindingsInfo"></p>
+      </div>
+    </div>
+
+    <!-- Joint angle controls -->
+    <div id="jointControlsContainer" style="display: none;">
+      <h3>Robot Control Panel</h3>
+      <div id="jointControls"></div>
+    </div>
+
+    <!-- AR Mode Indicator -->
+    <div id="arModeIndicator">AR Mode</div>
+
+    <!-- WebXR DOM Overlay -->
+    <div id="overlay">
+      <!-- UI elements that should appear in AR go here -->
+      <button id="endSessionButton" class="clickable" style="display: none; position: fixed; top: 10px; left: 10px; background-color: rgba(255, 0, 0, 0.7); color: white; border: none; border-radius: 4px; padding: 8px 15px; font-size: 14px;">Exit XR</button>
+    </div>
+
+    <div id="debug"></div>
+    <!-- Load our application script after protobuf.js -->
+    <script type="module" src="/static/js/app.js" defer></script>
+    
+    <script>
+      // Set up the AR help popup buttons
+      document.addEventListener('DOMContentLoaded', function() {
+        // Force AR button in the help popup
+        const forceARButton = document.getElementById('forceARButton');
+        if (forceARButton) {
+          forceARButton.addEventListener('click', function() {
+            if (window.forceARMode) {
+              window.forceARMode();
+              document.getElementById('arPassthroughHelp').style.display = 'none';
+            }
+          });
+        }
+        
+        // Close help button in popup
+        const closeHelpButton = document.getElementById('closeHelpButton');
+        if (closeHelpButton) {
+          closeHelpButton.addEventListener('click', function() {
+            document.getElementById('arPassthroughHelp').style.display = 'none';
+          });
+        }
+      });
+    </script>
+</body>
+</html> 

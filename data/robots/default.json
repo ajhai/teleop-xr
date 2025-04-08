@@ -1,0 +1,69 @@
+{
+  "name": "Default Robot",
+  "joint_groups": [
+    {
+      "name": "Default Arm",
+      "urdf_path": "/urdf/arm.urdf",
+      "description": "5-DOF Robotic Arm model",
+      "placement": {
+        "position": [
+          0.0,
+          0.2,
+          -1.0
+        ],
+        "orientation": [
+          -1.57,
+          0.0,
+          0.0
+        ],
+        "end_effector": "Fixed_Jaw"
+      },
+      "end_effector": "Fixed_Jaw",
+      "joints": [
+        {
+          "name": "Rotation",
+          "motor_name": "shoulder_pan",
+          "motor_id": 1,
+          "motor_type": "sts3215",
+          "initial_angle": 9.4
+        },
+        {
+          "name": "Pitch",
+          "motor_name": "shoulder_lift",
+          "motor_id": 2,
+          "motor_type": "sts3215",
+          "initial_angle": 183.0
+        },
+        {
+          "name": "Elbow",
+          "motor_name": "elbow_flex",
+          "motor_id": 3,
+          "motor_type": "sts3215",
+          "initial_angle": 165.0
+        },
+        {
+          "name": "Wrist_Pitch",
+          "motor_name": "wrist_flex",
+          "motor_id": 4,
+          "motor_type": "sts3215",
+          "initial_angle": 165.0
+        },
+        {
+          "name": "Wrist_Roll",
+          "motor_name": "wrist_roll",
+          "motor_id": 5,
+          "motor_type": "sts3215",
+          "initial_angle": 165.0
+        },
+        {
+          "name": "Jaw",
+          "motor_name": "jaw",
+          "motor_id": 6,
+          "motor_type": "sts3215",
+          "initial_angle": 165.0
+        }
+      ],
+      "controller_binding": "right_controller"
+    }
+  ]
+}

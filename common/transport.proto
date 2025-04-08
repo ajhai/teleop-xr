@@ -1,0 +1,161 @@
+syntax = "proto3";
+
+package teleop_xr;
+
+// Message encapsulating all communication between frontend and backend
+message Transport {
+  // Type of action being performed
+  ActionType action_type = 1;
+  
+  // Timestamp in milliseconds since epoch
+  int64 timestamp = 2;
+  
+  // Optional sequence number for ordered processing
+  uint32 sequence = 3;
+  
+  // Payload varies based on action type
+  oneof payload {
+    RobotStatePayload robot_state = 10;
+    RobotCommandPayload robot_command = 11;
+    JointPositionPayload joint_position = 12;
+    ImagePayload image = 13;
+    ErrorPayload error = 14;
+    ConnectionStatusPayload connection_status = 15;
+    HeartbeatPayload heartbeat = 16;
+  }
+}
+
+// Types of actions that can be performed
+enum ActionType {
+  UNKNOWN = 0;
+  ROBOT_STATE_UPDATE = 1;     // Backend -> Frontend: Full robot state update
+  ROBOT_COMMAND = 2;          // Frontend -> Backend: Robot command
+  JOINT_POSITION_UPDATE = 3;  // Backend -> Frontend: Joint position update
+  JOINT_POSITION_COMMAND = 4; // Frontend -> Backend: Set joint position
+  IMAGE_UPDATE = 5;           // Backend -> Frontend: Camera image update
+  ERROR = 6;                  // Either direction: Error notification
+  CONNECTION_STATUS = 7;      // Backend -> Frontend: Robot connection status
+  HEARTBEAT = 8;              // Either direction: Connection keep-alive
+}
+
+// Full robot state update
+message RobotStatePayload {
+  string robot_id = 1;
+  repeated JointState joints = 2;
+  RobotStatus status = 3;
+  
+  // Optional joint group-specific state
+  map<string, JointGroupState> joint_groups = 4;
+}
+
+// State of a specific joint group
+message JointGroupState {
+  string joint_group_id = 1;
+  repeated JointState joints = 2;
+  
+  // Current end effector pose
+  Pose end_effector_pose = 3;
+}
+
+// Robot command
+message RobotCommandPayload {
+  string robot_id = 1;
+  string command = 2;
+  map<string, string> parameters = 3;
+}
+
+// Joint position update or command
+message JointPositionPayload {
+  string robot_id = 1;
+  string joint_group_id = 2;
+  repeated JointState joints = 3;
+}
+
+// Single joint state
+message JointState {
+  string joint_name = 1;
+  float position = 2;     // Position in radians
+  float velocity = 3;     // Velocity in radians/sec
+  float effort = 4;       // Effort/torque
+  float target = 5;       // Target position if applicable
+  JointMode mode = 6;     // Current control mode
+}
+
+// Joint control mode
+enum JointMode {
+  POSITION = 0;
+  VELOCITY = 1;
+  EFFORT = 2;
+  DISABLED = 3;
+}
+
+// Robot status
+enum RobotStatus {
+  DISCONNECTED = 0;
+  CONNECTING = 1;
+  CONNECTED = 2;
+  ERROR_STATE = 3;
+  BUSY = 4;
+  IDLE = 5;
+}
+
+// Camera image update
+message ImagePayload {
+  string camera_id = 1;
+  bytes image_data = 2;     // Compressed image bytes (e.g., JPEG)
+  string format = 3;        // Image format (e.g., "jpeg", "png")
+  uint32 width = 4;         // Image width
+  uint32 height = 5;        // Image height
+  string encoding = 6;      // Color encoding (e.g., "rgb", "bgr")
+  uint64 capture_timestamp = 7; // When the image was captured
+}
+
+// Error information
+message ErrorPayload {
+  string error_code = 1;
+  string message = 2;
+  string details = 3;
+  ErrorSeverity severity = 4;
+  
+  enum ErrorSeverity {
+    INFO = 0;
+    WARNING = 1;
+    ERROR = 2;
+    CRITICAL = 3;
+  }
+}
+
+// Connection status update
+message ConnectionStatusPayload {
+  string robot_id = 1;
+  RobotStatus status = 2;
+  string message = 3;
+  int64 connection_timestamp = 4;
+}
+
+// Heartbeat to keep connection alive
+message HeartbeatPayload {
+  uint64 client_time = 1;
+  uint64 server_time = 2;
+}
+
+// 3D position
+message Vector3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+// Quaternion orientation
+message Quaternion {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+  float w = 4;
+}
+
+// Pose (position and orientation)
+message Pose {
+  Vector3 position = 1;
+  Quaternion orientation = 2;
+}

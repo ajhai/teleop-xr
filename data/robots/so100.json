@@ -1,0 +1,123 @@
+{
+    "name": "SO100",
+    "description": "A 5-DOF robotic arm",
+    "backend_type": "lerobot/so100",
+    "backend_calibration_dir": "/Users/<your-username>/.cache/calibration/so100/",
+    "menu": [
+        {
+            "name": "Record Episode",
+            "description": "Record an episode",
+            "command": "record_episode",
+            "config": {
+                "task": "test task",
+                "repo_id": "lerobot/test",
+                "fps": 30,
+                "root": "/Users/<your-username>/.cache/huggingface/lerobot/test"
+            }
+        },
+        {
+            "name": "Stop Recording",
+            "description": "Stop recording an episode",
+            "command": "stop_record_episode"
+        }
+    ],
+    "joint_groups": [
+        {
+            "name": "Main Arm",
+            "urdf_path": "/urdf/so100.urdf",
+            "description": "5-DOF Robotic Arm model",
+            "placement": {
+                "position": [0.25, 0.2, -1.0],
+                "orientation": [-1.57, 3.14, 0]
+            },
+            "end_effector": "Fixed_Jaw",
+            "joints": [
+                {
+                    "name": "Rotation",
+                    "motor_name": "shoulder_pan",
+                    "motor_id": 7,
+                    "motor_type": "sts3215",
+                    "initial_angle": 0.0,
+                    "orientation_correction": {
+                        "offset": 0,
+                        "direction": -1.0
+                    }
+                },
+                {
+                    "name": "Pitch",
+                    "motor_name": "shoulder_lift",
+                    "motor_id": 8,
+                    "motor_type": "sts3215",
+                    "initial_angle": 0.0,
+                    "orientation_correction": {
+                        "offset": 90,
+                        "direction": -1.0
+                    }
+                },
+                {
+                    "name": "Elbow",
+                    "motor_name": "elbow_flex",
+                    "motor_id": 9,
+                    "motor_type": "sts3215",
+                    "initial_angle": 0.0,
+                    "orientation_correction": {
+                        "offset": -90,
+                        "direction": 1.0
+                    }
+                },
+                {
+                    "name": "Wrist_Pitch",
+                    "motor_name": "wrist_flex",
+                    "motor_id": 10,
+                    "motor_type": "sts3215",
+                    "initial_angle": 0.0,
+                    "orientation_correction": {
+                        "offset": -90,
+                        "direction": 1.0
+                    }
+                },
+                {
+                    "name": "Wrist_Roll",
+                    "motor_name": "wrist_roll",
+                    "motor_id": 11,
+                    "motor_type": "sts3215",
+                    "initial_angle": 0.0,
+                    "orientation_correction": {
+                        "offset": 90,
+                        "direction": -1.0
+                    }
+                },
+                {
+                    "name": "Jaw",
+                    "motor_name": "gripper",
+                    "motor_id": 12,
+                    "motor_type": "sts3215",
+                    "initial_angle": 0.0,
+                    "orientation_correction": {
+                        "offset": 0,
+                        "direction": 1.0
+                    },
+                    "button_mapping": {
+                        "open": 4,
+                        "close": 5
+                    }
+                }
+            ],
+            "controller_binding": "right_controller",
+            "backend_config": {
+                "name": "main",
+                "port": "/dev/tty.usbmodem58CD1769181"
+            }
+        }
+    ],
+    "cameras": [
+        {
+            "name": "laptop",
+            "type": "opencv",
+            "camera_index": 0,
+            "width": 640,
+            "height": 480,
+            "fps": 30
+        }
+    ]
+} 

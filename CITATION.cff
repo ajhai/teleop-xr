@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+title: "teleop-xr: A system for teleoperating robots in augmented reality"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - given-names: "Ajay Kumar"
+    family-names: "Chintala"
+url: "https://github.com/ajhai/teleop-xr"

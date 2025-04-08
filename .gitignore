@@ -1,0 +1,9 @@
+build/
+certs/
+.env
+*.egg-info
+.cache/
+.venv/
+.idea/
+.vscode/
+.DS_Store

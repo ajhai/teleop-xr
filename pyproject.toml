@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel", "grpcio-tools>=1.59.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teleop-xr"
+version = "0.1.0"
+description = "Teleoperate robots with WebXR"
+readme = "README.md"
+authors = [
+    {name = "Ajay Chintala"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.23.2",
+    "pydantic>=2.4.2",
+    "aiortc>=1.11.0",
+    "av>=14.2.0",
+    "opencv-python-headless>=4.11.0.86",
+    "numpy>=2.2.4",
+    "protobuf>=4.25.1",
+    "grpcio>=1.59.0",
+]
+
+[project.scripts]
+teleop-xr = "server.app:app"
+
+[tool.setuptools.packages.find]
+include = ["server*"] 
