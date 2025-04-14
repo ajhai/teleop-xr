@@ -2,6 +2,8 @@
 
 A system for teleoperating robots in augmented reality (AR) using WebXR.
 
+https://github.com/user-attachments/assets/d8a7df72-8b94-4e30-ba3d-987ea13ac2df
+
 ## Overview
 
 TeleOp XR enables users to visualize and control robots in AR directly from a browser. The system consists of:
